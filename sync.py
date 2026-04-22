@@ -155,33 +155,24 @@ def build_properties(assignment, course_name, professor_name):
         except (ValueError, TypeError):
             date_assigned = None
  
-    # Notes — combine description snippet + submission types
-    notes_parts = []
+    # Notes — just the assignment description, cleaned up
+    notes = ""
     description = assignment.get("description") or ""
     if description:
-        # Strip HTML tags for a clean text snippet
         import re
+        # Strip HTML tags for a clean text snippet
         clean = re.sub(r"<[^>]+>", "", description).strip()
+        # Collapse multiple whitespace/newlines into single spaces
+        clean = re.sub(r"\s+", " ", clean)
         if clean:
-            notes_parts.append(clean[:500])  # Limit to 500 chars
- 
-    sub_types = assignment.get("submission_types", [])
-    if sub_types:
-        readable = [s.replace("_", " ").title() for s in sub_types]
-        notes_parts.append(f"Submission: {', '.join(readable)}")
- 
-    points = assignment.get("points_possible")
-    if points is not None:
-        notes_parts.append(f"Points: {points}")
- 
-    notes = " | ".join(notes_parts) if notes_parts else ""
+            notes = clean[:2000]
  
     # Build Notion properties
     properties = {
         "Assignment Name": {"title": [{"text": {"content": name[:2000]}}]},
         "Class": {"select": {"name": course_name[:100]}},
         "Professor": {"select": {"name": professor_name[:100]}},
-        "Notes": {"rich_text": [{"text": {"content": notes[:2000]}}]},
+        "Notes": {"rich_text": [{"text": {"content": notes}}]},
     }
  
     if due_date:
@@ -234,6 +225,18 @@ def sync():
         for assignment in assignments:
             name = assignment.get("name", "Untitled")
             key = (course_name, name)
+ 
+            # Skip past-due assignments that aren't already in the database
+            due_at = assignment.get("due_at")
+            if due_at and key not in existing:
+                try:
+                    due_date = datetime.fromisoformat(due_at.replace("Z", "+00:00"))
+                    if due_date < datetime.now(timezone.utc):
+                        skipped_count += 1
+                        continue
+                except (ValueError, TypeError):
+                    pass
+ 
             properties = build_properties(assignment, course_name, professor)
  
             if key in existing:
@@ -267,9 +270,9 @@ def sync():
     print(f"✅ Sync complete!")
     print(f"   Created: {created_count}")
     print(f"   Updated: {updated_count}")
+    print(f"   Skipped (past due): {skipped_count}")
     print(f"   Total courses: {len(courses)}")
  
  
 if __name__ == "__main__":
     sync()
- 
