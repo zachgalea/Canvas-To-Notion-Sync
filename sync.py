@@ -21,6 +21,42 @@ NOTION_HEADERS = {
     "Content-Type": "application/json",
 }
  
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║                  EDIT THIS SECTION EACH YEAR                      ║
+# ║  Update your classes and teachers below when your schedule changes ║
+# ╚════════════════════════════════════════════════════════════════════╝
+ 
+# PROFESSOR OVERRIDES
+# If Canvas shows the wrong teacher for a class, add it here.
+# The course name must match EXACTLY how it appears on Canvas.
+# To find the exact name, check the sync logs or your Canvas dashboard.
+#
+# Format:  "Course Name On Canvas": "Correct Teacher Name",
+#
+# Example:
+#   "IB Math AI HLY2 -- Smith": "John Smith",
+#   "AP English Lit-Jones": "Sarah Jones",
+ 
+PROFESSOR_OVERRIDES = {
+    # ── 2025-2026 School Year ──
+    "IB Lng&Lit HLY1-Stevenson": "Angela Stevenson",
+    "Digital Photo 1-P 1 & 3": "Christina Salinas",
+    # Add more overrides below as needed:
+    # "Course Name": "Teacher Name",
+}
+ 
+# COURSES TO SKIP
+# Add any course names you want to completely ignore (no assignments synced).
+# Useful for homeroom, advisory, or non-academic courses.
+#
+# Format: "Course Name On Canvas",
+ 
+COURSES_TO_SKIP = [
+    "DMHS Class of 2027 (Juniors)",
+    # Add more courses to skip below:
+    # "Course Name",
+]
+ 
  
 # ─── Canvas API Helpers ───
  
@@ -214,8 +250,17 @@ def sync():
         course_name = course["name"]
         print(f"── {course_name} ──")
  
-        # Get professor
-        professor = get_course_teacher(course_id)
+        # Skip courses in the skip list
+        if course_name in COURSES_TO_SKIP:
+            print(f"   ⏭ Skipped (in COURSES_TO_SKIP)")
+            print()
+            continue
+ 
+        # Get professor (check overrides first)
+        if course_name in PROFESSOR_OVERRIDES:
+            professor = PROFESSOR_OVERRIDES[course_name]
+        else:
+            professor = get_course_teacher(course_id)
         print(f"   Professor: {professor}")
  
         # Get assignments
@@ -276,3 +321,4 @@ def sync():
  
 if __name__ == "__main__":
     sync()
+ 
