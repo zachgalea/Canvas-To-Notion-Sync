@@ -39,8 +39,13 @@ NOTION_HEADERS = {
  
 PROFESSOR_OVERRIDES = {
     # ── 2025-2026 School Year ──
-    "IB Lng&Lit HLY1-Stevenson": "Angela Stevenson",
     "Digital Photo 1-P 1 & 3": "Christina Salinas",
+    "IB HOTA HL (Y1)-Piraro": "Lauren Piraro",
+    "Military Sci 3-Levesque": "Eric Levesque",
+    "IB Lng&Lit HLY1-Stevenson": "Angela Stevenson",
+    "IB Bio HL (Y1)-Iyengar": "RJ Iyengar",
+    "IB Math AI HLY1 -- Duriseti": "Kristen Duriseti",
+    
     # Add more overrides below as needed:
     # "Course Name": "Teacher Name",
 }
