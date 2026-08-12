@@ -1,6 +1,7 @@
 """
 Canvas LMS → Notion Database Sync Script
-Automatically fetches assignments from Canvas and syncs them to a Notion database.
+Automatically fetches assignments from TWO Canvas schools/accounts and
+syncs each one into its own Notion database.
 Designed to run on GitHub Actions on a schedule (cron).
 """
  
@@ -9,17 +10,30 @@ import requests
 from datetime import datetime, timezone
  
 # ─── Configuration (pulled from environment variables) ───
-CANVAS_BASE_URL = os.environ["CANVAS_BASE_URL"].rstrip("/")
-CANVAS_TOKEN = os.environ["CANVAS_TOKEN"]
-NOTION_SECRET = os.environ["NOTION_SECRET"]
-NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
  
-CANVAS_HEADERS = {"Authorization": f"Bearer {CANVAS_TOKEN}"}
+NOTION_SECRET = os.environ["NOTION_SECRET"]
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_SECRET}",
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json",
 }
+ 
+# Each school is its own Canvas account (different base URL + token)
+# syncing into its own Notion database.
+SCHOOLS = [
+    {
+        "label": "School 1",
+        "canvas_base_url": os.environ["CANVAS_BASE_URL"].rstrip("/"),
+        "canvas_token": os.environ["CANVAS_TOKEN"],
+        "notion_database_id": os.environ["NOTION_DATABASE_ID"],
+    },
+    {
+        "label": "School 2",
+        "canvas_base_url": os.environ["CANVAS_BASE_URL_2"].rstrip("/"),
+        "canvas_token": os.environ["CANVAS_TOKEN_2"],
+        "notion_database_id": os.environ["NOTION_DATABASE_ID_2"],
+    },
+]
  
 # ╔════════════════════════════════════════════════════════════════════╗
 # ║                  EDIT THIS SECTION EACH YEAR                      ║
@@ -30,6 +44,7 @@ NOTION_HEADERS = {
 # If Canvas shows the wrong teacher for a class, add it here.
 # The course name must match EXACTLY how it appears on Canvas.
 # To find the exact name, check the sync logs or your Canvas dashboard.
+# Works for courses from EITHER school — just add the exact name.
 #
 # Format:  "Course Name On Canvas": "Correct Teacher Name",
 #
@@ -38,26 +53,26 @@ NOTION_HEADERS = {
 #   "AP English Lit-Jones": "Sarah Jones",
  
 PROFESSOR_OVERRIDES = {
-    # ── 2025-2026 School Year ──
-    "Digital Photo 1-P 1 & 3": "Christina Salinas",
-    "IB HOTA HL (Y1)-Piraro": "Lauren Piraro",
-    "Military Sci 3-Levesque": "Eric Levesque",
-    "IB Lng&Lit HLY1-Stevenson": "Angela Stevenson",
-    "IB Bio HL (Y1)-Iyengar": "RJ Iyengar",
-    "IB Math AI HLY1 -- Duriseti": "Kristen Duriseti",
-    
-    # Add more overrides below as needed:
+    # ── 2026-2027 School Year ──
+    "IB Bio HL (Y2)-Iyengar": "Iyengar",
+    "Military Sci 4-Levesque": "Levesque",
+    "IB Lng&Lit HLY2-Chatfield": "Chatfield",
+    "IB HOTA HL (Y2)-Schwartz": "Schwartz",
+    "IntroWeightTrng-Ghazanfari": "Ghazanfari",
+ 
+    # Add more overrides below as needed (from either school):
     # "Course Name": "Teacher Name",
 }
  
 # COURSES TO SKIP
 # Add any course names you want to completely ignore (no assignments synced).
 # Useful for homeroom, advisory, or non-academic courses.
+# Works for courses from EITHER school — just add the exact name.
 #
 # Format: "Course Name On Canvas",
  
 COURSES_TO_SKIP = [
-    "DMHS Class of 2027 (Juniors)",
+    "DMHS Class of 2027 (Seniors)",
     # Add more courses to skip below:
     # "Course Name",
 ]
@@ -65,12 +80,12 @@ COURSES_TO_SKIP = [
  
 # ─── Canvas API Helpers ───
  
-def canvas_get(endpoint):
+def canvas_get(base_url, headers, endpoint):
     """Fetch all pages from a Canvas API endpoint."""
-    url = f"{CANVAS_BASE_URL}/api/v1/{endpoint}"
+    url = f"{base_url}/api/v1/{endpoint}"
     results = []
     while url:
-        resp = requests.get(url, headers=CANVAS_HEADERS, timeout=30)
+        resp = requests.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
         results.extend(resp.json())
         # Handle pagination
@@ -78,16 +93,17 @@ def canvas_get(endpoint):
     return results
  
  
-def get_active_courses():
-    """Get all active courses for the current user."""
-    courses = canvas_get("courses?enrollment_state=active&per_page=100")
+def get_active_courses(base_url, headers):
+    """Get all active courses for the current user on this Canvas account."""
+    courses = canvas_get(base_url, headers, "courses?enrollment_state=active&per_page=100")
     return [c for c in courses if isinstance(c, dict) and c.get("name")]
  
  
-def get_course_teacher(course_id):
+def get_course_teacher(base_url, headers, course_id):
     """Get the primary teacher/professor name for a course."""
     try:
         enrollments = canvas_get(
+            base_url, headers,
             f"courses/{course_id}/enrollments?type[]=TeacherEnrollment&per_page=5"
         )
         for e in enrollments:
@@ -99,10 +115,10 @@ def get_course_teacher(course_id):
     return "Unknown"
  
  
-def get_assignments(course_id):
+def get_assignments(base_url, headers, course_id):
     """Get all assignments for a course."""
     try:
-        return canvas_get(f"courses/{course_id}/assignments?per_page=100")
+        return canvas_get(base_url, headers, f"courses/{course_id}/assignments?per_page=100")
     except Exception as e:
         print(f"  ⚠ Could not fetch assignments for course {course_id}: {e}")
         return []
@@ -110,11 +126,11 @@ def get_assignments(course_id):
  
 # ─── Notion API Helpers ───
  
-def get_existing_assignments():
-    """Fetch all existing assignment entries from the Notion database.
+def get_existing_assignments(database_id):
+    """Fetch all existing assignment entries from a Notion database.
     Returns a dict mapping (class_name, assignment_name) → page_id.
     """
-    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+    url = f"https://api.notion.com/v1/databases/{database_id}/query"
     existing = {}
     has_more = True
     start_cursor = None
@@ -149,7 +165,7 @@ def get_existing_assignments():
  
  
 def create_notion_page(assignment_data):
-    """Create a new page in the Notion database."""
+    """Create a new page in a Notion database."""
     url = "https://api.notion.com/v1/pages"
     resp = requests.post(url, headers=NOTION_HEADERS, json=assignment_data, timeout=30)
     if not resp.ok:
@@ -225,23 +241,29 @@ def build_properties(assignment, course_name, professor_name):
     return properties
  
  
-# ─── Main Sync Logic ───
+# ─── Per-School Sync Logic ───
  
-def sync():
-    print("🔄 Starting Canvas → Notion sync...")
-    print(f"   Canvas: {CANVAS_BASE_URL}")
-    print(f"   Database: {NOTION_DATABASE_ID}")
+def sync_school(school):
+    """Sync one Canvas account's assignments into its own Notion database."""
+    label = school["label"]
+    base_url = school["canvas_base_url"]
+    headers = {"Authorization": f"Bearer {school['canvas_token']}"}
+    database_id = school["notion_database_id"]
+ 
+    print(f"═══ {label} ═══")
+    print(f"   Canvas: {base_url}")
+    print(f"   Database: {database_id}")
     print()
  
     # 1. Get existing Notion entries to avoid duplicates
     print("📋 Fetching existing Notion entries...")
-    existing = get_existing_assignments()
+    existing = get_existing_assignments(database_id)
     print(f"   Found {len(existing)} existing entries")
     print()
  
     # 2. Fetch active courses
     print("📚 Fetching active courses...")
-    courses = get_active_courses()
+    courses = get_active_courses(base_url, headers)
     print(f"   Found {len(courses)} active courses")
     print()
  
@@ -265,11 +287,11 @@ def sync():
         if course_name in PROFESSOR_OVERRIDES:
             professor = PROFESSOR_OVERRIDES[course_name]
         else:
-            professor = get_course_teacher(course_id)
+            professor = get_course_teacher(base_url, headers, course_id)
         print(f"   Professor: {professor}")
  
         # Get assignments
-        assignments = get_assignments(course_id)
+        assignments = get_assignments(base_url, headers, course_id)
         print(f"   Assignments: {len(assignments)}")
  
         for assignment in assignments:
@@ -300,7 +322,7 @@ def sync():
             else:
                 # Create new entry
                 page_data = {
-                    "parent": {"database_id": NOTION_DATABASE_ID},
+                    "parent": {"database_id": database_id},
                     "properties": properties,
                 }
                 try:
@@ -317,13 +339,26 @@ def sync():
         print()
  
     print("─" * 40)
-    print(f"✅ Sync complete!")
+    print(f"✅ {label} sync complete!")
     print(f"   Created: {created_count}")
     print(f"   Updated: {updated_count}")
     print(f"   Skipped (past due): {skipped_count}")
     print(f"   Total courses: {len(courses)}")
+    print()
+ 
+ 
+# ─── Main ───
+ 
+def sync():
+    print("🔄 Starting Canvas → Notion sync...")
+    print()
+    for school in SCHOOLS:
+        try:
+            sync_school(school)
+        except Exception as e:
+            print(f"❌ {school['label']} sync failed: {e}")
+            print()
  
  
 if __name__ == "__main__":
     sync()
- 
