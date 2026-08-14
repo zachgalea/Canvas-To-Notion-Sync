@@ -77,6 +77,7 @@ PROFESSOR_OVERRIDES = {
 
 COURSES_TO_SKIP = [
     "DMHS Class of 2027 (Seniors)",
+    "Military Sci 4-Levesque",
     # Add more courses to skip below:
     # "Course Name",
 ]
