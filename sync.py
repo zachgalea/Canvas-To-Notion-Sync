@@ -248,10 +248,74 @@ def build_properties(assignment, course_name, professor_name, title_property, in
     return properties
 
 
+# ─── Startup Validation ───
+
+def validate_school(school):
+    """Run quick checks before syncing so setup mistakes fail with a clear
+    message instead of a wall of raw API errors partway through."""
+    label = school["label"]
+    base_url = school["canvas_base_url"]
+    headers = {"Authorization": f"Bearer {school['canvas_token']}"}
+    database_id = school["notion_database_id"]
+    title_property = school["title_property"]
+    include_professor = school["include_professor"]
+
+    # Check Canvas connectivity/token
+    try:
+        resp = requests.get(
+            f"{base_url}/api/v1/courses?per_page=1", headers=headers, timeout=15
+        )
+        if resp.status_code == 401:
+            raise RuntimeError(
+                f"[{label}] Canvas token was rejected (401). It's likely expired "
+                f"or revoked — generate a new one in Canvas → Account → Settings "
+                f"→ Approved Integrations, and update the CANVAS_TOKEN secret."
+            )
+        resp.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(
+            f"[{label}] Could not reach Canvas at {base_url}. "
+            f"Double check the CANVAS_BASE_URL secret is correct."
+        )
+
+    # Check Notion database is reachable (integration connected + valid ID)
+    resp = requests.get(
+        f"https://api.notion.com/v1/databases/{database_id}",
+        headers=NOTION_HEADERS,
+        timeout=15,
+    )
+    if resp.status_code == 404:
+        raise RuntimeError(
+            f"[{label}] Notion database {database_id} not found (404). "
+            f"Either the NOTION_DATABASE_ID secret is wrong (make sure you copied "
+            f"the database's own ID, not a parent page's), or your Notion "
+            f"integration isn't connected to this database — check '...' → "
+            f"Connections on the database page."
+        )
+    resp.raise_for_status()
+    schema = resp.json().get("properties", {})
+
+    # Check every property the script needs actually exists in this database
+    required = [title_property, "Class", "Notes", "Due Date", "Date Assigned"]
+    if include_professor:
+        required.append("Professor")
+
+    missing = [p for p in required if p not in schema]
+    if missing:
+        raise RuntimeError(
+            f"[{label}] Notion database is missing expected propert"
+            f"{'y' if len(missing) == 1 else 'ies'}: {', '.join(missing)}. "
+            f"Either add {'it' if len(missing) == 1 else 'them'} to the database, "
+            f"or update the school's config in sync.py to match your actual column names."
+        )
+
+
 # ─── Per-School Sync Logic ───
 
 def sync_school(school):
     """Sync one Canvas account's assignments into its own Notion database."""
+    validate_school(school)
+
     label = school["label"]
     base_url = school["canvas_base_url"]
     headers = {"Authorization": f"Bearer {school['canvas_token']}"}
